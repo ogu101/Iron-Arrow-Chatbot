@@ -6,15 +6,19 @@ Single tool: retrieve_context(section_key)
 Each call advances a per-section retrieval_state counter stored in the
 Chainlit session.  The counter controls which layer is returned:
 
-  retrieval_state[key] == 0  →  first call  →  Layer 1 (bullet summary)
-  retrieval_state[key] == 1  →  second call →  Layer 2 (full PDF text)
-  retrieval_state[key] >= 2  →  subsequent  →  "already at maximum depth"
+  retrieval_state[key] == 0  →  first call  →  Layer 1 (overview paragraph + bullets)
+  retrieval_state[key] == 1  →  second call →  Layer 2 (subsection fact bullets)
+  retrieval_state[key] == 2  →  third call  →  Layer 3 (full PDF text, extracted live)
+  retrieval_state[key] >= 3  →  subsequent  →  "already at maximum depth"
 
 Layer 0 (one-sentence index) is always embedded in the system prompt and
 never requires a tool call.
 
-Layer 2 text is extracted live from the split PDF for the section so that
-the JSON chunks don't need to store the full text at all.
+Layer 3 text is extracted live from the split PDF so that the JSON chunks
+don't need to store full text.
+
+Uses AsyncAnthropic throughout to stay on the async event loop required
+by Chainlit's ASGI server.
 """
 
 import json
@@ -24,7 +28,7 @@ from datetime import datetime
 from pathlib import Path
 
 import chainlit as cl
-from anthropic import Anthropic
+from anthropic import AsyncAnthropic
 from pypdf import PdfReader
 
 from config import (
@@ -32,6 +36,7 @@ from config import (
     CLAUDE_MODEL,
     MAX_TOKENS_PER_CONVERSATION,
     MAX_TOKENS_PER_REQUEST,
+    CLAUDE_TEMPERATURE,
     WELCOME_MESSAGE,
     ERROR_MESSAGES,
     LOG_LEVEL,
@@ -53,16 +58,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-client = Anthropic(api_key=ANTHROPIC_API_KEY)
+# AsyncAnthropic — must be used inside async handlers to avoid NoEventLoopError
+client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
 
 # ── Path configuration ────────────────────────────────────────────────────────
 CHUNKS_DIR   = Path(os.getenv("CHUNKS_DIR",   "./chunks"))
-SECTIONS_DIR = Path(os.getenv("SECTIONS_DIR", "./sections"))  # split PDFs live here
+SECTIONS_DIR = Path(os.getenv("SECTIONS_DIR", "./sections"))
 
 
 # ── Chunk loading ─────────────────────────────────────────────────────────────
 def _load_chunks() -> dict[str, dict]:
-    """Load all section JSON chunks from disk. Returns {key: chunk_dict}."""
+    """Load all section JSON chunks from disk at startup. Returns {key: chunk_dict}."""
     chunks = {}
     if not CHUNKS_DIR.exists():
         logger.warning(f"Chunks directory not found: {CHUNKS_DIR}")
@@ -79,12 +85,9 @@ def _load_chunks() -> dict[str, dict]:
 CHUNKS: dict[str, dict] = _load_chunks()
 
 
-# ── Layer 2 — live PDF text extraction ───────────────────────────────────────
+# ── Layer 3 — live PDF text extraction ───────────────────────────────────────
 def _extract_pdf_text(key: str) -> str:
-    """
-    Extract full text from the section's split PDF.
-    Falls back to the JSON layer2_full_text field if the PDF is not found.
-    """
+    """Extract full text from the section's split PDF at query time."""
     pdf_path = SECTIONS_DIR / f"{key}.pdf"
     if pdf_path.exists():
         try:
@@ -95,13 +98,7 @@ def _extract_pdf_text(key: str) -> str:
         except Exception as e:
             logger.error(f"PDF extraction failed for {key}: {e}")
 
-    # Fallback: pre-extracted text stored in JSON (may be empty if not generated)
-    fallback = CHUNKS.get(key, {}).get("layer2_full_text", {}).get("text", "")
-    if fallback:
-        logger.info(f"Using JSON fallback text for {key} ({len(fallback)} chars)")
-        return fallback
-
-    return "(Full text unavailable: split PDF not found and no JSON fallback.)"
+    return "(Full text unavailable: split PDF not found.)"
 
 
 # ── Layer 0 — always-in-context index ────────────────────────────────────────
@@ -164,8 +161,8 @@ def execute_retrieve_context(section_key: str, retrieval_state: dict[str, int]) 
     Advance retrieval_state[section_key] by 1, then return the appropriate layer.
 
     Layer mapping:
-        1st call  →  layer1_summary   (paragraph + narrative bullets)
-        2nd call  →  layer2_details   (subsection-by-subsection fact bullets)
+        1st call  →  layer1_summary  (paragraph + narrative bullets)
+        2nd call  →  layer2_details  (subsection-by-subsection fact bullets)
         3rd call  →  layer3_full_text (raw PDF text extracted live)
         4th call+ →  already at max depth
 
@@ -180,7 +177,6 @@ def execute_retrieve_context(section_key: str, retrieval_state: dict[str, int]) 
             f"Unknown key: {section_key}",
         )
 
-    # Increment state (initialised to 0 if key not yet seen)
     next_level = retrieval_state.get(section_key, 0) + 1
     retrieval_state[section_key] = next_level
 
@@ -189,9 +185,9 @@ def execute_retrieve_context(section_key: str, retrieval_state: dict[str, int]) 
 
     # ── Layer 1: thematic paragraph + narrative bullets ───────────────────────
     if next_level == 1:
-        l1        = chunk["layer1_summary"]
-        paragraph = l1.get("paragraph", "")
-        bullets   = l1.get("bullets", [])
+        l1           = chunk["layer1_summary"]
+        paragraph    = l1.get("paragraph", "")
+        bullets      = l1.get("bullets", [])
         bullet_block = "\n".join(f"* {b}" for b in bullets)
         result = (
             f"### {section_name} — Overview (Layer 1)\n\n"
@@ -268,7 +264,7 @@ layers 1 and 2 were still insufficient — e.g. the user needs an exact quote or
 async def start():
     cl.user_session.set("messages",        [])
     cl.user_session.set("total_tokens",    0)
-    cl.user_session.set("retrieval_state", {})   # {section_key: int} — starts empty (all 0)
+    cl.user_session.set("retrieval_state", {})
     logger.info("New chat session started")
     await cl.Message(content=WELCOME_MESSAGE).send()
 
@@ -294,7 +290,9 @@ async def main(message: cl.Message):
 
         while True:
             api_calls += 1
-            response = client.messages.create(
+
+            # AsyncAnthropic — awaited to stay on the event loop
+            response = await client.messages.create(
                 model=CLAUDE_MODEL,
                 max_tokens=MAX_TOKENS_PER_REQUEST,
                 temperature=CLAUDE_TEMPERATURE,
