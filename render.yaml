@@ -3,11 +3,11 @@ services:
     name: iron-arrow-chatbot
     runtime: python
     pythonVersion: "3.11"
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install --no-deps chainlit==2.4.400 && pip install -r requirements.txt
     startCommand: chainlit run app.py --host 0.0.0.0 --port $PORT
     envVars:
       - key: ANTHROPIC_API_KEY
-        sync: false          # means you set this manually in the Render dashboard
+        sync: false
       - key: CHUNKS_DIR
         value: ./chunks
       - key: SECTIONS_DIR
