@@ -1,4 +1,4 @@
- """
+"""
 app.py — Iron Arrow History Chatbot with Progressive Disclosure RAG
 
 Single tool: retrieve_context(section_key)
