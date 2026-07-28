@@ -20,7 +20,7 @@ CLAUDE_MODEL = "claude-sonnet-4-6"
 
 # Claude API settings
 
-# Set thinking = {"type": "adaptive"}, output_config={"effort": CLAUDE_EFFORT}
+#Set thinking = {"type": "adaptive"}, output_config={"effort": CLAUDE_EFFORT}
 CLAUDE_EFFORT = "high"  # Effort levels: low, medium, high, xhigh, max
 
 # ============================================================================
@@ -49,7 +49,7 @@ ENVIRONMENT = os.getenv("ENVIRONMENT", "development")  # development or producti
 # RESOURCE FILE CONFIGURATION
 # ============================================================================
 
-#RESOURCES_FILE = "iron_arrow_resources.xlsx" # should contain metadata from iron arrow history pdf
+RESOURCES_FILE = "iron_arrow_resources.xlsx" # should contain metadata from iron arrow history pdf
 
 # ============================================================================
 # RESOURCE LOADING FROM EXCEL
@@ -102,7 +102,7 @@ def load_resources_from_excel(filepath: str) -> Dict[str, Dict[str, Any]]:
 
 
 # Load resources from Excel
-#RESOURCES = load_resources_from_excel(RESOURCES_FILE)
+RESOURCES = load_resources_from_excel(RESOURCES_FILE)
 
 # ============================================================================
 # SYSTEM PROMPT TEMPLATE
