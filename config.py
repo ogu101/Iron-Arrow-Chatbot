@@ -20,7 +20,7 @@ CLAUDE_MODEL = "claude-sonnet-4-6"
 
 # Claude API settings
 
-#Set thinking = {"type": "adaptive"}, output_config={"effort": CLAUDE_EFFORT}
+# Set thinking = {"type": "adaptive"}, output_config={"effort": CLAUDE_EFFORT}
 CLAUDE_EFFORT = "high"  # Effort levels: low, medium, high, xhigh, max
 
 # ============================================================================
@@ -49,13 +49,12 @@ ENVIRONMENT = os.getenv("ENVIRONMENT", "development")  # development or producti
 # RESOURCE FILE CONFIGURATION
 # ============================================================================
 
-RESOURCES_FILE = "iron_arrow_resources.xlsx" # should contain metadata from iron arrow history pdf
+#RESOURCES_FILE = "iron_arrow_resources.xlsx" # should contain metadata from iron arrow history pdf
 
 # ============================================================================
 # RESOURCE LOADING FROM EXCEL
 # ============================================================================
 
-# NOTE: can keep this the same if i use the same excel format
 
 def load_resources_from_excel(filepath: str) -> Dict[str, Dict[str, Any]]:
     """
@@ -102,6 +101,7 @@ def load_resources_from_excel(filepath: str) -> Dict[str, Dict[str, Any]]:
 
 
 # Load resources from Excel
+RESOURCES_FILE = "../iron_arrow_resources.xlsx"  # Path to the Excel file containing resources
 RESOURCES = load_resources_from_excel(RESOURCES_FILE)
 
 # ============================================================================
@@ -222,7 +222,7 @@ def validate_config():
     if not ANTHROPIC_API_KEY:
         errors.append("ANTHROPIC_API_KEY is required")
 
-    if not RESOURCES:
+    #if not RESOURCES:
         errors.append("At least one resource must be configured")
 
     if MAX_TOKENS_PER_CONVERSATION <= 0:
