@@ -1,4 +1,4 @@
-chainlit==2.4.400
+chainlit>=1.1.301
 anthropic>=0.29.0
 requests>=2.31.0
 pandas>=2.1.0
