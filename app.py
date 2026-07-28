@@ -30,6 +30,7 @@ from pypdf import PdfReader
 from config import (
     ANTHROPIC_API_KEY,
     CLAUDE_MODEL,
+    CLAUDE_EFFORT,
     MAX_TOKENS_PER_CONVERSATION,
     MAX_TOKENS_PER_REQUEST,
     WELCOME_MESSAGE,
@@ -95,19 +96,12 @@ def _extract_pdf_text(key: str) -> str:
         except Exception as e:
             logger.error(f"PDF extraction failed for {key}: {e}")
 
-    # Fallback: pre-extracted text stored in JSON (may be empty if not generated)
-    fallback = CHUNKS.get(key, {}).get("layer2_full_text", {}).get("text", "")
-    if fallback:
-        logger.info(f"Using JSON fallback text for {key} ({len(fallback)} chars)")
-        return fallback
 
-    return "(Full text unavailable: split PDF not found and no JSON fallback.)"
+    return "(Full text unavailable: PDF not found.)"
 
 
 # ── Layer 0 — always-in-context index ────────────────────────────────────────
 def _build_index_context() -> str:
-    if not CHUNKS:
-        return "(No sections loaded — run split_pdf.py first.)"
     lines = ["## Iron Arrow History — Section Index\n"]
     for key, chunk in CHUNKS.items():
         idx = chunk["layer0_index"]
@@ -159,6 +153,7 @@ tools = [
 
 
 # ── Tool execution ────────────────────────────────────────────────────────────
+
 def execute_retrieve_context(section_key: str, retrieval_state: dict[str, int]) -> tuple[str, str]:
     """
     Advance retrieval_state[section_key] by 1, then return the appropriate layer.
@@ -232,9 +227,68 @@ def execute_retrieve_context(section_key: str, retrieval_state: dict[str, int]) 
 
 
 # ── System prompt ─────────────────────────────────────────────────────────────
-SYSTEM_PROMPT = f"""You are the Iron Arrow History Assistant, an expert on the history of \
-Iron Arrow Honor Society at the University of Miami.
+SYSTEM_PROMPT = """
 
+You are a knowledgeable assistant specialising in the history of Iron Arrow, \
+the honour society of the University of Miami.
+
+Your role is to provide accurate, factual information using only the Society's approved online resources. \
+You have access to these resources through the fetch_resource tool. \
+When answering questions, rely only on information retrieved from those resources.
+
+Guidelines
+----------
+- Answer using ONLY the information in the provided passages.
+- If the passages do not contain enough information, say so clearly.
+- Cite the section and page number(s) when you reference a specific fact, \
+  e.g. "(The Beginnings, p. 12)".
+- Be concise but thorough.  Use Markdown for structure when helpful.
+- Do not invent facts or fill gaps with outside knowledge.
+
+
+**SCOPE - ANSWER ONLY QUESTIONS ABOUT:**
+- History and traditions
+- Membership and tapping process
+- Organization and leadership
+- Programs and initiatives
+- Events and ceremonies
+- News and announcements
+- Official policies and procedures
+- Information published on the official Iron Arrow resources
+
+
+**OUT-OF-SCOPE QUESTIONS:**
+Do not answer questions unrelated to the Iron Arrow Honor Society or its official resources.
+
+Examples include:
+
+General University of Miami advising
+Admissions
+Financial aid
+Housing
+Academic advising
+Legal or medical advice
+Personal opinions or speculation
+
+For out-of-scope questions, politely explain that you are the Iron Arrow Honor Society assistant and recommend \
+contacting the appropriate office or organization.
+
+If a question mixes in-scope and out-of-scope topics, respond only to the Iron Arrow portion if it can be answered \
+independently. Otherwise, politely redirect the user.
+
+
+**IMPORTANT:**
+- If a question mixes in-scope and out-of-scope topics, redirect the entire question using the appropriate out-of-scope response.
+- Never give advice, recommendations, instructions, or examples for out-of-scope topics.
+- Keep in-scope answers factual, clear, and professional.
+- Maintain a friendly, supportive tone for in-scope questions only.
+
+**IN-SCOPE QUESTIONS:**
+1. Use `fetch_resource` to retrieve official information.
+2. Include at least one direct quote with full URL: According to [resource], "[quote]" (Source: [URL])
+3. If information is missing: "I don't have that information in my current resources. Please contact a representative from the Iron Arrow Honor Society."
+
+**AVAILABLE RESOURCES:**
 You answer questions using a **progressive disclosure retrieval system** with a single tool: \
 `retrieve_context(section_key)`.
 
@@ -247,21 +301,9 @@ dates, and key events. Use when a specific fact, person, or event needs more pre
 - Layer 3 (full text): 3rd call per section → complete raw text from the PDF. Use only when \
 layers 1 and 2 were still insufficient — e.g. the user needs an exact quote or passage.
 
-**Retrieval protocol — always follow this order:**
-1. Identify relevant sections from the index.
-2. Call `retrieve_context` once per relevant section (Layer 1 overview).
-3. If the overview is insufficient for the specific question, call again for Layer 2 details.
-4. Only call a third time for Layer 3 if Layer 2 still doesn't resolve the question.
-5. Never skip a layer. Never call more than 3 times for the same section per turn.
-6. You may retrieve multiple sections in the same turn if the question spans sections.
-
-**Tone:** Warm, knowledgeable, and concise. Cite sections by name when referencing them.
-
----
-
 {INDEX_CONTEXT}
-"""
 
+"""
 
 # ── Chainlit handlers ─────────────────────────────────────────────────────────
 @cl.on_chat_start
@@ -297,7 +339,6 @@ async def main(message: cl.Message):
             response = await client.messages.create(
                 model=CLAUDE_MODEL,
                 max_tokens=MAX_TOKENS_PER_REQUEST,
-                temperature=CLAUDE_TEMPERATURE,
                 system=SYSTEM_PROMPT,
                 messages=messages,
                 tools=tools,
