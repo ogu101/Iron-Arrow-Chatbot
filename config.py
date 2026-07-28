@@ -222,7 +222,7 @@ def validate_config():
     if not ANTHROPIC_API_KEY:
         errors.append("ANTHROPIC_API_KEY is required")
 
-    #if not RESOURCES:
+    if not RESOURCES:
         errors.append("At least one resource must be configured")
 
     if MAX_TOKENS_PER_CONVERSATION <= 0:
