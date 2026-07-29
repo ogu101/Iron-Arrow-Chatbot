@@ -27,7 +27,7 @@ CLAUDE_EFFORT = "high"  # Effort levels: low, medium, high, xhigh, max
 # TOKEN LIMITS
 # ============================================================================
 
-MAX_TOKENS_PER_CONVERSATION = 50000
+MAX_TOKENS_PER_CONVERSATION = 250000
 MAX_TOKENS_PER_REQUEST = 2500
 
 # ============================================================================
